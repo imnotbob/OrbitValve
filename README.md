@@ -4,7 +4,7 @@ for SmartThings
 
 Orbit Model HT8-ZB
 
-Installation if running prior to Smarthings hub firwmare 22.8,  you should set the time on the orbit device prior to including it in Smartthings.
+Installation if running prior to Smarthings hub firwmare 22.8,  you should set the time on the orbit device prior to including it in Smartthings.   Firmware 22.8 and later should set the time for you.
 
 This device handler should be installed via the IDE in "My Device Handlers", "save", and "publish for me".
 
