@@ -1,5 +1,5 @@
 /**
- *  Orbit Water Timer
+ *  Orbit Water Faucet Valve
  *
  *  Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  *  in compliance with the License. You may obtain a copy of the License at:
@@ -181,6 +181,7 @@ def parse(String description) {
 		if(result?.name == "switch") {
 			if(result?.value == "off") {
 				res << createEvent(name: "valve", value: "closed")
+				unschedule("myPoll")
 			} else {
 				res << createEvent(name: "valve", value: "open")
 			}
