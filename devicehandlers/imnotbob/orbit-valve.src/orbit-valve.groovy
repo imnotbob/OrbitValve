@@ -28,9 +28,17 @@ metadata {
 		capability "Configuration"
 		capability "Refresh"
 		capability "Switch"
+		capability "Switch Level"
 		capability "Valve"
 
 		command "checkdev"
+		command "onehour"
+		command "runlevel"
+		command "runfor", ["number"]
+		command "setLevel", ["number"]
+
+		attribute "level", "NUMBER"
+		attribute "onehour", "STRING"
 
 		fingerprint profileId: "0104", inClusters: "0000,0001,0003,0020,0006,0201", outClusters: "000A,0019"
 	}
@@ -69,14 +77,23 @@ metadata {
 		standardTile("reInit", "device.refresh", decoration: "flat") {
 			state "refresh", label:'reInit', action:"refresh.refresh", icon:"st.secondary.refresh"
 		}
-		standardTile("open", "device.switch", decoration: "flat", inactiveLabel: false) {
+		standardTile("open", "device.switch", decoration: "flat" ) {
 			state "on", label:'open', action:"open", icon:"st.Outdoor.outdoor16", backgroundColor: "#53a7c0"
 		}
-		standardTile("close", "device.switch", decoration: "flat", inactiveLabel: false) {
+		standardTile("close", "device.switch", decoration: "flat") {
 			state "off", label:'close', action:"close", icon:"st.Outdoor.outdoor16", backgroundColor: "#ffffff"
 		}
+		controlTile("timercontrol", "device.level", "slider", height: 1, width: 2, range: "5..120") {
+			state "default", action:"switch level.setLevel"
+		}
+		standardTile("runlevel", "device.level", decoration: "flat") {
+			state "default", label:'${currentValue}', action:"runlevel", icon:"st.Outdoor.outdoor16", backgroundColor: "#53a7c0"
+		}
+		standardTile("onehour", "device.switch", decoration: "flat") {
+			state "default", label:'1 Hour', action:"onehour", icon:"st.Outdoor.outdoor16", backgroundColor: "#53a7c0"
+		}
 		main "switch"
-		details(["switch","battery","refresh","reInit","open", "close"])
+		details(["switch","onehour","battery","timercontrol","runlevel","open","close","refresh","reInit"])
 	}
 }
 
@@ -99,6 +116,7 @@ def configure() {
 		zigbee.configureReporting(0x0006, 0x0000, 0x10, 0, 600, null) +
 		zigbee.configureReporting(0x0001, 0x0020, 0x20, 30, 21600, 0x01)
 */
+	sendEvent(name: "level", value:10)
 	return zigbee.onOffConfig(0,(3600*6)) +
 		zigbee.configureReporting(0x0001, 0x0020, 0x20, 600, (3600*6), 0x01) + // Configure Battery reporting
 		zigbee.writeAttribute(0x0020, 0x0000, 0x23, 0x3840) + // Poll control set to 1 hour
@@ -153,6 +171,7 @@ def initialize() {
 	if(!state.updatedLastRanAt || now() >= state.updatedLastRanAt + 4000) {
 		log.info "initialize..."
 		state.updatedLastRanAt = now()
+		sendEvent(name: "level", value:10)
 		state.isInstalled = true
 		unschedule()
 		fireCommand(refresh())
@@ -221,7 +240,7 @@ def parse(String description) {
 def myPoll() {
 	def cmd = ""
 	def howLong =  now() - state?.parseLastRanAt
-	if( howLong > (12 * 60 * 1000)) {
+	if( howLong > ( 12* 60 * 1000)) {   // if parse did not run in last 12 minutes
 		sendEvent(name: "switch", value:"off")
 		sendEvent(name: "valve", value:"closed")
 		cmd = refresh1(false)
@@ -248,12 +267,25 @@ def on() {
 }
 
 def off() {
-	log.trace "off()"
+	if(state?.origRunFor) {
+		def howLong =  now() - state?.runForStart
+		log.info "ending runFor(${state.origRunFor}) min; ran for ${(howLong/(60*1000))} mins"
+		unschedule("nextrun")
+		state.runForTime = null
+		state.origRunFor = null
+		state.thisRun = null
+	}
 	sendEvent(name: "switch", value:"off")
 	sendEvent(name: "valve", value:"closed")
 	unschedule("myPoll")
+	log.trace "off()"
 	return zigbee.off() //+
 		//zigbee.readAttribute(0x0006, 0x0000)
+}
+
+def setLevel(num) {
+	log.trace "setLevel($num)"
+	sendEvent(name: "level", value:num)
 }
 
 def open() {
@@ -264,6 +296,61 @@ def open() {
 def close() {
 	log.trace "close()"
 	return off()
+}
+
+def runlevel() {
+	log.trace "runlevel()"
+	def timemins = device?.currentValue("level")
+	if(!timemins) {
+		sendEvent(name: "level", value:10)
+		timemins = 10
+	}
+	runfor(timemins)
+}
+
+def onehour() {
+	log.trace "onehour()"
+	runfor(60)
+}
+
+def runfor(mins) {
+	state.runForTime = mins
+	if(mins > 240) {
+		state.runForTime = 240
+	}
+	state.origRunFor = state.runForTime
+	state.runForStart = now()
+	runAgain()
+}
+
+def runAgain() {
+	def runintime = state?.runForTime
+	if(state?.runForTime == null || runintime < 0 || runintime > 240) {
+		log.error "bad runintime ${runintime} mins"
+		return
+	}
+	if(state?.runForTime && state?.runForTime > 0) {
+		fireCommand(on())
+		if(runintime > 10) {
+			runintime = 10 - 1
+		}
+		state.thisRun = runintime
+		def timeleft = state?.runForTime
+		state?.runForTime = state?.runForTime - state.thisRun
+		runIn((runintime*60), "nextrun", [overwrite: true])
+		def howLong =  now() - state?.runForStart
+		log.info "runfor(${state.origRunFor}) mins has ${timeleft} mins; ran for ${(howLong/(60*1000))} mins; running sleep for ${runintime} mins"
+	}
+}
+
+def nextrun() {
+	def howLong =  now() - state?.runForStart
+	if(state?.runForTime <= 0 || howLong > (state.origRunFor*60*1000)) {
+		log.info "ending runFor(${state.origRunFor}) min; ran for ${(howLong/(60*1000))} mins"
+		fireCommand(off())
+		return
+	}
+	runAgain()
 }
 
 private parseReportAttributeMessage(String description) {
