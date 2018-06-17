@@ -207,10 +207,11 @@ def parse(String description) {
 		log.trace "parse_result:  $result"
 		if(result?.name == "switch") {
 			if(result?.value == "off") {
-				res << createEvent(name: "valve", value: "closed")
+				//res << createEvent(name: "valve", value: "closed")
 				offWork()
 			} else {
-				res << createEvent(name: "valve", value: "open")
+				//res << createEvent(name: "valve", value: "open")
+				onWork()
 			}
 		}
 		res << createEvent(result)
@@ -248,9 +249,10 @@ def myPoll() {
 	def cmd = ""
 	def howLong =  now() - state?.parseLastRanAt
 	if(howLong > ( 12* 60 * 1000)) {   // if parse did not run in last 12 minutes while we have an on command outstanding
-		sendEvent(name: "switch", value:"off")
-		sendEvent(name: "valve", value:"closed")
-		sendEvent(name: "remaining", value:0)
+		offWork()
+		//sendEvent(name: "switch", value:"off")
+		//sendEvent(name: "valve", value:"closed")
+		//sendEvent(name: "remaining", value:0)
 		cmd = refresh1(false)
 		log.debug "myPoll refresh ${howLong}ms"
 	} else {
@@ -264,12 +266,13 @@ def myPoll() {
 // Commands to device
 private onWork() {
 	def timeleft = state?.timeLeft
-	if(state?.timeLeft == null) {
+	if(state?.timeLeft == null || state?.timeLeft == 0) {
 		state.ontimeLeft = 10
 		timeleft = state?.ontimeLeft
 	} else {
 		state.ontimeLeft = null
 	}
+	sendEvent(name: "valve", value:"open")
 	sendEvent(name: "remaining", value:timeleft)
 	runIn(59, "updateRemaining", [overwrite: true])
 }
@@ -277,36 +280,39 @@ private onWork() {
 def on() {
 	log.trace "on()"
 /*
-	This device only turns on for 10 mins at a time
+	This device only turns on for 10 mins at a time (no less and no more by device), this dth controls this
 */
-	onWork()
+	//onWork()
 	runIn((10*60+40), "myPoll", [overwrite: true])
-	sendEvent(name: "switch", value:"on")
-	sendEvent(name: "valve", value:"open")
+	//sendEvent(name: "switch", value:"on")
+	//sendEvent(name: "valve", value:"open")
 	return zigbee.on() // +
 		//zigbee.readAttribute(0x0006, 0x0000)
 }
 
 private offWork() {
-	if(state?.origRunFor) {
-		def howLong =  now() - state?.runForStart
-		log.info "ending runFor(${state.origRunFor}) min; ran for ${(howLong/(60*1000))} mins"
+	if(device?.currentValue("switch") == "on") {
+		if(state?.origRunFor) {
+			def howLong =  now() - state?.runForStart
+			log.info "ending runFor(${state.origRunFor}) min; ran for ${(howLong/(60*1000))} mins"
+		}
+		unschedule("myPoll")
+		unschedule("nextrun")
+		unschedule("updateRemaining")
+		state.runForTime = null
+		state.origRunFor = null
+		state.thisRun = null
+		state.timeLeft = null
+		state.ontimeLeft = null
+		sendEvent(name: "valve", value:"closed")
+		sendEvent(name: "remaining", value:0)
 	}
-	unschedule("myPoll")
-	unschedule("nextrun")
-	unschedule("updateRemaining")
-	sendEvent(name: "remaining", value:0)
-	state.runForTime = null
-	state.origRunFor = null
-	state.thisRun = null
-	state.timeLeft = null
-	state.ontimeLeft = null
 }
 
 def off() {
-	offWork()
-	sendEvent(name: "switch", value:"off")
-	sendEvent(name: "valve", value:"closed")
+	//offWork()
+	//sendEvent(name: "switch", value:"off")
+	//sendEvent(name: "valve", value:"closed")
 	log.trace "off()"
 	return zigbee.off() //+
 		//zigbee.readAttribute(0x0006, 0x0000)
