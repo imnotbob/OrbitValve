@@ -14,6 +14,6 @@ This device supports switch (on/off) and valve (open / closed) device capabiliti
 
 In the ST app, you can turn it on/off (on defaults to 10mins)
 
-You can set longer time in the ST device.
+You can set longer time in the ST device, and it will display time remaining.  Time remaining on display of valve is 10 mins or less, but Device handler is updating the on state if you requested a longer run time.
 
-There is an API runfor(minutes) that you can use in core to run for longer periods of time without having to code for the 10 minute cycle in the device
+There is an API runfor(minutes) that you can use in WebCore to run for longer periods of time without having to code for the 10 minute cycle in the device
