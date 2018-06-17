@@ -11,6 +11,7 @@
  *  for the specific language governing permissions and limitations under the License.
  *
  *  20180609 - Initial Version based on what others have done. Thanks to all who have worked on this.
+ *  20180616 - Updates to display time remaining
  */
 /*
  * Capabilities
@@ -39,6 +40,7 @@ metadata {
 
 		attribute "level", "NUMBER"
 		attribute "onehour", "STRING"
+		attribute "remaining", "NUMBER"
 
 		fingerprint profileId: "0104", inClusters: "0000,0001,0003,0020,0006,0201", outClusters: "000A,0019"
 	}
@@ -71,6 +73,9 @@ metadata {
 		valueTile("battery", "device.battery", decoration: "flat") {
 			state "battery", label:'${currentValue}% battery', unit:""
 		}
+		valueTile("remaining", "device.remaining", width: 2, height: 1, decoration: "flat", wordWrap: true) {
+			state "default", label:'Time Remaining\n${currentValue} mins'
+		}
 		standardTile("refresh", "device.refresh", decoration: "flat") {
 			state "refresh", label:'', action:"checkdev", icon:"st.secondary.refresh"
 		}
@@ -93,7 +98,7 @@ metadata {
 			state "default", label:'1 Hour', action:"onehour", icon:"st.Outdoor.outdoor16", backgroundColor: "#53a7c0"
 		}
 		main "switch"
-		details(["switch","onehour","battery","timercontrol","runlevel","open","close","refresh","reInit"])
+		details(["switch","onehour","battery","timercontrol","runlevel","remaining","open","close","refresh","reInit"])
 	}
 }
 
@@ -117,6 +122,7 @@ def configure() {
 		zigbee.configureReporting(0x0001, 0x0020, 0x20, 30, 21600, 0x01)
 */
 	sendEvent(name: "level", value:10)
+	sendEvent(name: "remaining", value:0)
 	return zigbee.onOffConfig(0,(3600*6)) +
 		zigbee.configureReporting(0x0001, 0x0020, 0x20, 600, (3600*6), 0x01) + // Configure Battery reporting
 		zigbee.writeAttribute(0x0020, 0x0000, 0x23, 0x3840) + // Poll control set to 1 hour
@@ -172,6 +178,7 @@ def initialize() {
 		log.info "initialize..."
 		state.updatedLastRanAt = now()
 		sendEvent(name: "level", value:10)
+		sendEvent(name: "remaining", value:0)
 		state.isInstalled = true
 		unschedule()
 		fireCommand(refresh())
@@ -201,7 +208,7 @@ def parse(String description) {
 		if(result?.name == "switch") {
 			if(result?.value == "off") {
 				res << createEvent(name: "valve", value: "closed")
-				unschedule("myPoll")
+				offWork()
 			} else {
 				res << createEvent(name: "valve", value: "open")
 			}
@@ -240,9 +247,10 @@ def parse(String description) {
 def myPoll() {
 	def cmd = ""
 	def howLong =  now() - state?.parseLastRanAt
-	if( howLong > ( 12* 60 * 1000)) {   // if parse did not run in last 12 minutes
+	if(howLong > ( 12* 60 * 1000)) {   // if parse did not run in last 12 minutes while we have an on command outstanding
 		sendEvent(name: "switch", value:"off")
 		sendEvent(name: "valve", value:"closed")
+		sendEvent(name: "remaining", value:0)
 		cmd = refresh1(false)
 		log.debug "myPoll refresh ${howLong}ms"
 	} else {
@@ -254,11 +262,24 @@ def myPoll() {
 }
 
 // Commands to device
+private onWork() {
+	def timeleft = state?.timeLeft
+	if(state?.timeLeft == null) {
+		state.ontimeLeft = 10
+		timeleft = state?.ontimeLeft
+	} else {
+		state.ontimeLeft = null
+	}
+	sendEvent(name: "remaining", value:timeleft)
+	runIn(59, "updateRemaining", [overwrite: true])
+}
+
 def on() {
 	log.trace "on()"
 /*
 	This device only turns on for 10 mins at a time
 */
+	onWork()
 	runIn((10*60+40), "myPoll", [overwrite: true])
 	sendEvent(name: "switch", value:"on")
 	sendEvent(name: "valve", value:"open")
@@ -266,18 +287,26 @@ def on() {
 		//zigbee.readAttribute(0x0006, 0x0000)
 }
 
-def off() {
+private offWork() {
 	if(state?.origRunFor) {
 		def howLong =  now() - state?.runForStart
 		log.info "ending runFor(${state.origRunFor}) min; ran for ${(howLong/(60*1000))} mins"
-		unschedule("nextrun")
-		state.runForTime = null
-		state.origRunFor = null
-		state.thisRun = null
 	}
+	unschedule("myPoll")
+	unschedule("nextrun")
+	unschedule("updateRemaining")
+	sendEvent(name: "remaining", value:0)
+	state.runForTime = null
+	state.origRunFor = null
+	state.thisRun = null
+	state.timeLeft = null
+	state.ontimeLeft = null
+}
+
+def off() {
+	offWork()
 	sendEvent(name: "switch", value:"off")
 	sendEvent(name: "valve", value:"closed")
-	unschedule("myPoll")
 	log.trace "off()"
 	return zigbee.off() //+
 		//zigbee.readAttribute(0x0006, 0x0000)
@@ -329,15 +358,19 @@ def runAgain() {
 		log.error "bad runintime ${runintime} mins"
 		return
 	}
-	if(state?.runForTime && state?.runForTime > 0) {
-		fireCommand(on())
+	if(runintime > 0) {
 		if(runintime > 10) {
 			runintime = 10 - 1
 		}
 		state.thisRun = runintime
 		def timeleft = state?.runForTime
+		state.timeLeft = timeleft
+
+		fireCommand(on())
+
 		state?.runForTime = state?.runForTime - state.thisRun
 		runIn((runintime*60), "nextrun", [overwrite: true])
+
 		def howLong =  now() - state?.runForStart
 		log.info "runfor(${state.origRunFor}) mins has ${timeleft} mins; ran for ${(howLong/(60*1000))} mins; running sleep for ${runintime} mins"
 	}
@@ -346,11 +379,30 @@ def runAgain() {
 def nextrun() {
 	def howLong =  now() - state?.runForStart
 	if(state?.runForTime <= 0 || howLong > (state.origRunFor*60*1000)) {
-		log.info "ending runFor(${state.origRunFor}) min; ran for ${(howLong/(60*1000))} mins"
+		//log.info "ending runFor(${state.origRunFor}) min; ran for ${(howLong/(60*1000))} mins"
 		fireCommand(off())
 		return
 	}
 	runAgain()
+}
+
+def updateRemaining() {
+	def timeleft = state?.timeLeft
+	def ontimeleft = state?.ontimeLeft
+	if( (timeleft && timeleft > 1) ||  (ontimeleft && ontimeleft > 1) ) {
+		if(timeleft && timeleft > 1) {
+			state?.timeLeft = state?.timeLeft - 1
+			timeleft = state?.timeLeft
+			state.ontimeLeft = null
+		}
+		if(ontimeleft && ontimeleft > 1) {
+			state?.ontimeLeft = state?.ontimeLeft - 1
+			timeleft = state?.ontimeLeft
+		}
+		runIn(60, "updateRemaining", [overwrite: true])
+	}
+	timeleft = timeleft ?: (ontimeleft ?: 0)
+	sendEvent(name: "remaining", value:timeleft)
 }
 
 private parseReportAttributeMessage(String description) {
