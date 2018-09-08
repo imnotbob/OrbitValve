@@ -23,7 +23,7 @@
 */
 
 metadata {
-	definition (name: "orbit-valve", namespace: "imnotbob", author: "Eric, Gene Ussery, others") {
+	definition (name: "orbit-valve", namespace: "imnotbob", author: "Eric, Gene Ussery, others", vid: "generic-valve") {
 		capability "Actuator"
 		capability "Battery"
 		capability "Configuration"
